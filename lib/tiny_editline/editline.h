@@ -9,6 +9,13 @@
 #define HISTSIZE 128
 #define STATUSLINES 5
 
+/* META-k can be typed as ALT-k or ESC k */
+#define CTL(x)          ((x) & 0x1F)
+#define ISCTL(x)        (CTL(x) == (x))
+#define UNCTL(x)        ((x) + 64)
+#define META(x)         ((x) | 0x80)
+#define ISMETA(x)       (!!((x) & 0x80))
+#define UNMETA(x)       ((x) & 0x7F)
 
 // action.
 enum {
@@ -16,7 +23,8 @@ enum {
         EL_EXIT,        // got EOF
         EL_REDRAW,      // screen has been cleared and redrawn.
         EL_DATA,        // a full command is ready in editline_buf
-        EL_QDATA        // data that was aborted via ^Q
+        EL_QDATA,       // data that was aborted via ^Q
+        EL_UNKNOWN      // unknown control or alt code, value stored in key.
 };
 
 struct editline_state {
@@ -28,6 +36,8 @@ struct editline_state {
         uint8_t hend, hcur;
         // escape state
         uint8_t escape;
+        // last key pressed.
+        char key;
 };
 
 #define EDITLINE_STATE_INIT { 0 }

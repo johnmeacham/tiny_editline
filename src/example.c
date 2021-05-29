@@ -15,6 +15,8 @@ int main()
 
         /* we loop here since the terminal may not be connected right away.
          * you can explicitly redraw with ^L too */
+        add_history(&elstate, "0123456789");
+        add_history(&elstate, "hello this is a test of the emergency broadcast system.");
         do {
                 editline_redraw(&elstate);
         }  while(!char_available());

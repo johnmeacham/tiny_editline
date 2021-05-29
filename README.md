@@ -23,8 +23,6 @@ consisting of mainly the buffer.
         ^U               - delete from cursor until beginning of line
         ^L               - redraw screen
         ^M (Enter)       - enter command
-        ALT-f            - forward to next word
-        ALT-b            - backwards to previous word
         ^W               - delete to beginning of current word
         ALT-Backspace    - delete to beginning of current word
         ^T               - transpose characters, dragging character forward.
@@ -32,6 +30,12 @@ consisting of mainly the buffer.
         ALT-u            - uppercase word
         ALT-l            - lowercase word
         ALT-c            - capitalize word
+
+        ALT-f            - move to next end of word
+        ALT-b            - move to previous beginning of word
+
+        ALT-a            - move to beginning of current word
+        ALT-e            - move to end of current word
 
         // todo
         ALT-t            - exchange previous with current word

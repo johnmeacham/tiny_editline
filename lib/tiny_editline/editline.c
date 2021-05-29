@@ -6,32 +6,11 @@
 #include <string.h>
 #include <stdbool.h>
 
-#define CTL(x)          ((x) & 0x1F)
-#define ISCTL(x)        (CTL(x) == (x))
-#define UNCTL(x)        ((x) + 64)
-#define META(x)         ((x) | 0x80)
-#define ISMETA(x)       ((x) & 0x80)
-#define UNMETA(x)       ((x) & 0x7F)
 
 #ifdef EDITLINE_DEBUG
 static void char_show(char c);
 #endif
 static int editline_char(struct editline_state *state, unsigned char ch);
-
-/* static void putnum(unsigned short n) */
-/* { */
-/*         char buf[12], *s = buf; */
-/*         itoa(n,buf,10); */
-/*         while(*s++) */
-/*                 editline_putchar(*s); */
-
-/*         /1* unsigned char i = 0; *1/ */
-/*         /1* do { *1/ */
-/*         /1*         buf[i++] = n % 10 + '0'; *1/ */
-/*         /1* } while ((n /= 10) > 0); *1/ */
-/*         /1* while (i--) *1/ */
-/*         /1*         editline_putchar(buf[i]); *1/ */
-/* } */
 
 static void putnum(unsigned short n)
 {
@@ -127,11 +106,12 @@ void memrev(char *mem, int len)
 }
 
 /* rotate memory in place */
-void memrot(char *mem, int r, int len)
+/* swap the next x characters with the y characters after it */
+void memrot(char *mem, int x, int y)
 {
-        memrev(mem, r);
-        memrev(mem + r, len - r);
-        memrev(mem, len);
+        memrev(mem, x);
+        memrev(mem + x, y);
+        memrev(mem, x + y);
 }
 
 
@@ -183,7 +163,6 @@ int got_char(struct editline_state *s, char ch)
                         return EL_NOTHING;
                 } else {
                         s->escape = 0;
-//                        editline_char(s, CTL('['));
                         return editline_char(s, META(ch));
                 }
         } else if (s->escape == 2) {
@@ -196,9 +175,8 @@ int got_char(struct editline_state *s, char ch)
                         s->escape = ch;
                         return EL_NOTHING;
                 }
-                editline_char(s, CTL('['));
-                editline_char(s, '[');
-                return editline_char(s, ch);
+                /* unknown CSI sequence */
+                return EL_NOTHING;
         } else if (s->escape >= '0' && s->escape <= '9') {
                 if (ch == '~') {
                         ch = s->escape;
@@ -212,10 +190,8 @@ int got_char(struct editline_state *s, char ch)
                                 return editline_char(s, CTL('E'));
                         }
                 }
-                editline_char(s, CTL('['));
-                editline_char(s, '[');
-                editline_char(s, s->escape);
-                return editline_char(s, ch);
+                /* unknown CSI sequence */
+                return EL_NOTHING;
         }
         return EL_NOTHING;
 }
@@ -260,10 +236,84 @@ static void move_cursor_to(struct editline_state *state, int pos)
         state->pos = pos;
 }
 
+static bool is_bow(struct editline_state *s, int p) {
+        return p <= 0 || p < s->len && s->buf[p - 1] == ' ' && s->buf[p] != ' ';
+}
+static bool is_eow(struct editline_state *s, int p) {
+        return p >= s->len || p > 0 && s->buf[p - 1] != ' ' && s->buf[p] == ' ';
+}
+/* search for word boundry, either end of word seastate->lenrching forward or beginning of
+ * word searching backwards. */
+static uint8_t word_boundry(struct editline_state *state, int npos, bool forwards) {
+        if (npos > state->len)
+                npos = state->len;
+        if (npos < 0)
+                npos = 0;
+        if(forwards)
+                while(!is_eow(state, npos))
+                        npos++;
+        else
+                while(!is_bow(state, npos))
+                        npos--;
+        /* char *buf = state->buf; */
+        /* if(forwards) */
+        /*         while (npos < state->len && */
+        /*                ((npos != 0 && buf[npos - 1] == ' ') || buf[npos] != ' ')) */
+        /*                 npos++; */
+        /* else */
+        /*         while (npos > 0 && */
+        /*                (buf[npos - 1] != ' ' || buf[npos] == ' ')) */
+        /*                 npos--; */
+        return npos;
+}
+
+static uint8_t next_word(struct editline_state *state, uint8_t npos, bool eow) {
+                while (npos < state->len && eow ^ (state->buf[npos] != ' '))
+                        npos++;
+                while (npos < state->len && eow ^ (state->buf[npos] == ' '))
+                        npos++;
+                return npos;
+}
+
+/* find next or previous boundry */
+static uint8_t next_boundry(struct editline_state *state, int npos) {
+        if(npos <= 0)
+                return 0;
+        if(npos >= state->len)
+                return state->len;
+        while (npos < state->len && (state->buf[npos] == ' ') == (state->buf[npos+1] == ' '))
+                npos++;
+        return npos;
+}
+
+
+/* word cursor is on or after cursor if cursor is on whitespace */
+static uint8_t this_word(struct editline_state *state, uint8_t npos, bool eow) {
+        while (npos < state->len && state->buf[npos] == ' ')
+                npos++;
+        if(eow) {
+                while (npos < state->len && state->buf[npos] != ' ')
+                        npos++;
+        } else {
+                while (npos > 0 && state->buf[npos - 1] != ' ')
+                        npos--;
+        }
+        return npos;
+}
+
+
+static uint8_t prev_word(struct editline_state *state, uint8_t npos, bool eow) {
+                while (npos > 0 && (!eow) ^ (state->buf[npos - 1] != ' '))
+                        npos--;
+                while (npos > 0 && (!eow) ^ (state->buf[npos - 1] == ' '))
+                        npos--;
+                return npos;
+}
 
 static int
 editline_char(struct editline_state *state, unsigned char ch)
 {
+        state->key = ch;
         unsigned char npos = state->pos;
         switch (ch) {
         case CTL('L'):
@@ -295,55 +345,97 @@ editline_char(struct editline_state *state, unsigned char ch)
         case CTL('B'):
                 move_cursor_to(state, state->pos - 1);
                 break;
-        case ALT('T'):
+
+        case META('t'): {
+                int eos = word_boundry(state, npos + 1, true);
+                while(eos > 0 && state->buf[eos - 1] == ' ')
+                        eos--;
+                int bos = word_boundry(state, eos, false);
+                int bof = word_boundry(state, bos - 1, false);
+                int eof = word_boundry(state, bof, true);
+                if (eof >= bos)
+                        return;
+                printf("\rbof: %i eof: %i bos: %i eos: %i\033[K\n",bof, eof, bos, eos);
+                redraw_current_command(state);
+//                int bos = prev_word(state, eos, true);
+//                int eof = prev_word(state, bos, false);
+ //               int bof = prev_word(state, eof, true);
+                char *buf = state->buf + bof;
+                int lof = eof - bof;
+                int low = bos - eof;
+                int los = eos - bos;
+                memrot(buf, lof, low);
+                memrot(buf + low, lof, los);
+                memrot(buf, low, los);
+                /* eos -= bof; */
+                /* bos -= bof; */
+                /* eof -= bof; */
+                /* bof -> bof; */
+                /* memrot(buf, eof - bof, bos - bof); */
+                /* memrot(buf + bos - bof - (eof - bof), eof - bof, eos - (bos - eof)); */
+                /* memrot(buf,bos - bof - (eof - bof), bos - bof); */
+                redraw_current_command(state);
+                move_cursor_to(state, eos);
+                break;
+        }
+
+
         case CTL('R'):
                 memrot(state->buf + npos, 3, state->len - npos);
 //                memrev(state->buf, state->len);
                 redraw_current_command(state);
                 break;
         case META('f'):
-                while (npos < state->len && state->buf[npos] != ' ')
-                        npos++;
-                while (npos < state->len && state->buf[npos] == ' ')
-                        npos++;
+                //npos = next_word(state, npos, false);
+                npos = word_boundry(state, npos + 1, true);
                 move_cursor_to(state, npos);
                 break;
         case META('b'):
-                while (npos > 0 && state->buf[npos] != ' ')
-                        npos--;
-                while (npos > 0 && state->buf[npos] == ' ')
-                        npos--;
-                while (npos > 0 && state->buf[npos - 1] != ' ')
-                        npos--;
+                npos = word_boundry(state, npos - 1, false);
                 move_cursor_to(state, npos);
+                break;
+#if 1
+        case META('a'):
+                npos = word_boundry(state, npos, false);
+                move_cursor_to(state, npos);
+                break;
+        case META('e'):
+                npos = word_boundry(state, npos, true);
+                move_cursor_to(state, npos);
+                break;
+        /* case META('a'): */
+        /*         move_cursor_to(state, this_word(state, npos, false)); */
+        /*         break; */
+        /* case META('e'): */
+        /*         move_cursor_to(state, this_word(state, npos, true)); */
+        /*         break; */
+        /* case META('k'): */
+        /*         move_cursor_to(state, next_boundry(state, npos)); */
+        /*         break; */
+        /* case META('j'): */
+        /*         move_cursor_to(state, this_word(state, npos, true)); */
+        /*         break; */
+#endif
+        case META('d'): ;
+                npos = word_boundry(state, npos + 1, true);
+                delete_chars(state, state->pos, npos - state->pos);
+                print_rest(state);
                 break;
         case META('u'):
         case META('c'):
         case META('l'):
-        case META('d'):
-                while (npos < state->len && state->buf[npos] == ' ')
-                        npos++;
-                while (npos < state->len && state->buf[npos] != ' ')
-                        npos++;
-                if (npos == state->pos)
-                        break;
-                if (ch == META('d')) {
-                        delete_chars(state, state->pos, npos - state->pos);
-                        print_rest(state);
-                        break;
-                }
+                npos = word_boundry(state, npos + 1, true);
                 int i = state->pos;
                 while (i < state->len && state->buf[i] == ' ')
                         i++;
-                state->buf[i] = toupper(state->buf[i]);
-                if (ch == META('c')) {
-                        ch = META('l');
+                if (ch == META('c') && i < npos) {
+                        state->buf[i] = toupper(state->buf[i]);
                         i++;
                 }
                 if (ch == META('u'))
                         for (; i < npos; i++)
                                 state->buf[i] = toupper(state->buf[i]);
-                else if (ch == META('l'))
+                else
                         for (; i < npos; i++)
                                 state->buf[i] = tolower(state->buf[i]);
                 print_rest(state);
@@ -352,11 +444,12 @@ editline_char(struct editline_state *state, unsigned char ch)
         case META(CTL('H')):
         case META(0x7f):
         case CTL('W'):
-                npos--;
-                while (npos > 0 && state->buf[npos] == ' ')
-                        npos--;
-                while (npos > 0 && state->buf[npos] != ' ')
-                        npos--;
+                npos = word_boundry(state, npos - 1, false);
+                /* npos--; */
+                /* while (npos > 0 && state->buf[npos] == ' ') */
+                /*         npos--; */
+                /* while (npos > 0 && state->buf[npos] != ' ') */
+                /*         npos--; */
                 delete_chars(state, npos, state->pos - npos);
                 move_cursor_to(state, npos);
                 print_rest(state);
@@ -431,6 +524,8 @@ editline_char(struct editline_state *state, unsigned char ch)
                 add_history(state, editline_buf(state));
                 return ch == CTL('Q') ? EL_QDATA : EL_DATA;
         default:
+                if (ISMETA(ch) || ISCTL(ch))
+                        return EL_UNKNOWN;
                 if (state->len >= BUFSIZE - 1)
                         return EL_NOTHING;
                 state->len++;
@@ -469,8 +564,9 @@ char_show(char c)
                 editline_putchar('M');
                 editline_putchar('-');
                 char_show(UNMETA(c));
-        } else if (!isprint(c)) {
-                printf("\\x%02x", (unsigned char)c);
+        } else if (c == '\177') {
+                putchar2('\\','1');
+                putchar2('7','7');
         } else
                 editline_putchar(c);
 }
