@@ -1,0 +1,61 @@
+#ifndef EDITLINE_H
+#define EDITLINE_H
+
+#include <inttypes.h>
+#include <stdio.h>
+
+// configuration
+#define BUFSIZE 80
+#define HISTSIZE 128
+#define STATUSLINES 5
+
+
+// action.
+enum {
+        EL_NOTHING = 0,
+        EL_EXIT,        // got EOF
+        EL_REDRAW,      // screen has been cleared and redrawn.
+        EL_DATA,        // a full command is ready in editline_buf
+        EL_QDATA        // data that was aborted via ^Q
+};
+
+struct editline_state {
+        // buffer
+        uint8_t pos, len;
+        char buf[BUFSIZE];
+        // history
+        char hist[HISTSIZE];
+        uint8_t hend, hcur;
+        // escape state
+        uint8_t escape;
+};
+
+#define EDITLINE_STATE_INIT { 0 }
+
+static inline char *editline_buf(struct editline_state *state)
+{
+        return state->buf;
+}
+
+
+// should be provided by user.
+void editline_putchar(char ch);
+//#define editline_putchar(ch) putchar(ch)
+
+// clear screen and set up terminal.
+void editline_redraw(struct editline_state *state);
+
+
+// status line routines to display a fixed amount of data at the top of the
+// screen. these should be used in a pair. lines are numbered
+// starting at zero.
+void begin_statusline(struct editline_state *state, int n);
+void end_statusline(struct editline_state *state);
+
+// call this when a new keypress comes in. It will return one of EL_NOTHING,
+// EL_EXIT, EL_REDRAW, or EL_DATA
+int got_char(struct editline_state *s, char ch);
+
+void add_history(struct editline_state *, char *data);
+
+#endif
