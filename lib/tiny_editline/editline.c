@@ -236,79 +236,37 @@ static void move_cursor_to(struct editline_state *state, int pos)
         state->pos = pos;
 }
 
-static bool is_bow(struct editline_state *s, int p) {
+static bool is_bow(struct editline_state *s, int p)
+{
         return p <= 0 || p < s->len && s->buf[p - 1] == ' ' && s->buf[p] != ' ';
 }
-static bool is_eow(struct editline_state *s, int p) {
+static bool is_eow(struct editline_state *s, int p)
+{
         return p >= s->len || p > 0 && s->buf[p - 1] != ' ' && s->buf[p] == ' ';
 }
-/* search for word boundry, either end of word seastate->lenrching forward or beginning of
+
+/* search for word boundry, either end of word searching forward or beginning of
  * word searching backwards. */
-static uint8_t word_boundry(struct editline_state *state, int npos, bool forwards) {
+static uint8_t search_eow(struct editline_state *state, int npos)
+{
         if (npos > state->len)
-                npos = state->len;
-        if (npos < 0)
-                npos = 0;
-        if(forwards)
-                while(!is_eow(state, npos))
-                        npos++;
-        else
-                while(!is_bow(state, npos))
-                        npos--;
-        /* char *buf = state->buf; */
-        /* if(forwards) */
-        /*         while (npos < state->len && */
-        /*                ((npos != 0 && buf[npos - 1] == ' ') || buf[npos] != ' ')) */
-        /*                 npos++; */
-        /* else */
-        /*         while (npos > 0 && */
-        /*                (buf[npos - 1] != ' ' || buf[npos] == ' ')) */
-        /*                 npos--; */
-        return npos;
-}
-
-static uint8_t next_word(struct editline_state *state, uint8_t npos, bool eow) {
-                while (npos < state->len && eow ^ (state->buf[npos] != ' '))
-                        npos++;
-                while (npos < state->len && eow ^ (state->buf[npos] == ' '))
-                        npos++;
-                return npos;
-}
-
-/* find next or previous boundry */
-static uint8_t next_boundry(struct editline_state *state, int npos) {
-        if(npos <= 0)
-                return 0;
-        if(npos >= state->len)
                 return state->len;
-        while (npos < state->len && (state->buf[npos] == ' ') == (state->buf[npos+1] == ' '))
+        while (!is_eow(state, npos))
                 npos++;
         return npos;
 }
 
-
-/* word cursor is on or after cursor if cursor is on whitespace */
-static uint8_t this_word(struct editline_state *state, uint8_t npos, bool eow) {
-        while (npos < state->len && state->buf[npos] == ' ')
-                npos++;
-        if(eow) {
-                while (npos < state->len && state->buf[npos] != ' ')
-                        npos++;
-        } else {
-                while (npos > 0 && state->buf[npos - 1] != ' ')
-                        npos--;
-        }
+/* search for word boundry, either end of word searching forward or beginning of
+ * word searching backwards. */
+static uint8_t search_bow(struct editline_state *state, int npos)
+{
+        if (npos < 0)
+                return 0;
+        while (!is_bow(state, npos))
+                npos--;
         return npos;
 }
 
-
-static uint8_t prev_word(struct editline_state *state, uint8_t npos, bool eow) {
-                while (npos > 0 && (!eow) ^ (state->buf[npos - 1] != ' '))
-                        npos--;
-                while (npos > 0 && (!eow) ^ (state->buf[npos - 1] == ' '))
-                        npos--;
-                return npos;
-}
 
 static int
 editline_char(struct editline_state *state, unsigned char ch)
@@ -345,86 +303,50 @@ editline_char(struct editline_state *state, unsigned char ch)
         case CTL('B'):
                 move_cursor_to(state, state->pos - 1);
                 break;
-
         case META('t'): {
-                int eos = word_boundry(state, npos + 1, true);
-                while(eos > 0 && state->buf[eos - 1] == ' ')
+                /* find boundries of the two words we are going to swap */
+                int eos = search_eow(state, npos + 1);
+                int bos = search_bow(state, eos);
+                int bof = search_bow(state, bos - 1);
+                int eof = search_eow(state, bof);
+                /* don't drag trailing whitespace with us */
+                while (eos > 0 && state->buf[eos - 1] == ' ')
                         eos--;
-                int bos = word_boundry(state, eos, false);
-                int bof = word_boundry(state, bos - 1, false);
-                int eof = word_boundry(state, bof, true);
-                if (eof >= bos)
-                        return;
-                printf("\rbof: %i eof: %i bos: %i eos: %i\033[K\n",bof, eof, bos, eos);
-                redraw_current_command(state);
-//                int bos = prev_word(state, eos, true);
-//                int eof = prev_word(state, bos, false);
- //               int bof = prev_word(state, eof, true);
-                char *buf = state->buf + bof;
-                int lof = eof - bof;
-                int low = bos - eof;
-                int los = eos - bos;
-                memrot(buf, lof, low);
-                memrot(buf + low, lof, los);
-                memrot(buf, low, los);
-                /* eos -= bof; */
-                /* bos -= bof; */
-                /* eof -= bof; */
-                /* bof -> bof; */
-                /* memrot(buf, eof - bof, bos - bof); */
-                /* memrot(buf + bos - bof - (eof - bof), eof - bof, eos - (bos - eof)); */
-                /* memrot(buf,bos - bof - (eof - bof), bos - bof); */
+                if (eof >= bos || bos >= eos)
+                        break;
+                int lof = eof - bof, low = bos - eof, los = eos - bos;
+                memrot(state->buf + bof, lof, low);
+                memrot(state->buf + bof + low, lof, los);
+                memrot(state->buf + bof, low, los);
                 redraw_current_command(state);
                 move_cursor_to(state, eos);
                 break;
         }
-
-
-        case CTL('R'):
-                memrot(state->buf + npos, 3, state->len - npos);
-//                memrev(state->buf, state->len);
-                redraw_current_command(state);
-                break;
         case META('f'):
-                //npos = next_word(state, npos, false);
-                npos = word_boundry(state, npos + 1, true);
+                npos = search_eow(state, npos + 1);
                 move_cursor_to(state, npos);
                 break;
         case META('b'):
-                npos = word_boundry(state, npos - 1, false);
+                npos = search_bow(state, npos - 1);
                 move_cursor_to(state, npos);
                 break;
-#if 1
         case META('a'):
-                npos = word_boundry(state, npos, false);
+                npos = search_bow(state, npos);
                 move_cursor_to(state, npos);
                 break;
         case META('e'):
-                npos = word_boundry(state, npos, true);
+                npos = search_eow(state, npos);
                 move_cursor_to(state, npos);
                 break;
-        /* case META('a'): */
-        /*         move_cursor_to(state, this_word(state, npos, false)); */
-        /*         break; */
-        /* case META('e'): */
-        /*         move_cursor_to(state, this_word(state, npos, true)); */
-        /*         break; */
-        /* case META('k'): */
-        /*         move_cursor_to(state, next_boundry(state, npos)); */
-        /*         break; */
-        /* case META('j'): */
-        /*         move_cursor_to(state, this_word(state, npos, true)); */
-        /*         break; */
-#endif
         case META('d'): ;
-                npos = word_boundry(state, npos + 1, true);
+                npos = search_eow(state, npos + 1);
                 delete_chars(state, state->pos, npos - state->pos);
                 print_rest(state);
                 break;
         case META('u'):
         case META('c'):
         case META('l'):
-                npos = word_boundry(state, npos + 1, true);
+                npos = search_eow(state, npos + 1);
                 int i = state->pos;
                 while (i < state->len && state->buf[i] == ' ')
                         i++;
@@ -444,12 +366,7 @@ editline_char(struct editline_state *state, unsigned char ch)
         case META(CTL('H')):
         case META(0x7f):
         case CTL('W'):
-                npos = word_boundry(state, npos - 1, false);
-                /* npos--; */
-                /* while (npos > 0 && state->buf[npos] == ' ') */
-                /*         npos--; */
-                /* while (npos > 0 && state->buf[npos] != ' ') */
-                /*         npos--; */
+                npos = search_bow(state, npos - 1);
                 delete_chars(state, npos, state->pos - npos);
                 move_cursor_to(state, npos);
                 print_rest(state);
@@ -565,8 +482,8 @@ char_show(char c)
                 editline_putchar('-');
                 char_show(UNMETA(c));
         } else if (c == '\177') {
-                putchar2('\\','1');
-                putchar2('7','7');
+                putchar2('\\', '1');
+                putchar2('7', '7');
         } else
                 editline_putchar(c);
 }
