@@ -43,25 +43,21 @@ static void putnum(unsigned short n)
                 editline_putchar(*s);
 }
 
-//#define putchars(x,y) do {editline_putchar(x); editline_putchar(y); } while(0)
-static void putchar2(char x, char y)  {
+static void putchar2(char x, char y)
+{
         editline_putchar(x);
         editline_putchar(y);
-}
-static void putchars(char *s)  {
-        while(*s++)
-                editline_putchar(*s);
 }
 
 static void csi(char ch)
 {
-        putchar2('\033','[');
+        putchar2('\033', '[');
         editline_putchar(ch);
 }
 
 static void csi_n(int num, char ch)
 {
-        putchar2('\033','[');
+        putchar2('\033', '[');
         putnum(num);
         editline_putchar(ch);
 }
@@ -69,7 +65,7 @@ static void csi_n(int num, char ch)
 static void show_cursor(bool show)
 {
         csi('?');
-        putchar2('2','5');
+        putchar2('2', '5');
         editline_putchar(show ? 'h' : 'l');
 }
 
@@ -82,7 +78,6 @@ static void move_cursor(int8_t n)
 
 static void redraw_current_command(struct editline_state *state)
 {
-
         editline_putchar('\r');
         csi_n(999, 'H');
         for (unsigned char i = 0; i < state->len; i++)
@@ -98,8 +93,8 @@ void editline_redraw(struct editline_state *state)
         csi_n(2, 'J');
         if (STATUSLINES) {
                 csi_n(STATUSLINES + 2, ';');
-                putchar2('9','9');
-                putchar2('9','r');
+                putchar2('9', '9');
+                putchar2('9', 'r');
                 csi_n(STATUSLINES + 1, 'H');
                 for (char i = 0; i < 10; i++)
                         editline_putchar('-');
@@ -119,6 +114,24 @@ print_rest(struct editline_state *state)
         csi('K');
         putchar2(' ', ' ');
         csi('u');
+}
+
+/* reverse memory in place */
+void memrev(char *mem, int len)
+{
+        for (int i = 0; i < len >> 1; i++) {
+                char tmp = mem[i];
+                mem[i] = mem[len - i - 1];
+                mem[len - i - 1] = tmp;
+        }
+}
+
+/* rotate memory in place */
+void memrot(char *mem, int r, int len)
+{
+        memrev(mem, r);
+        memrev(mem + r, len - r);
+        memrev(mem, len);
 }
 
 
@@ -224,52 +237,52 @@ int got_char(struct editline_state *s, char ch)
  * ^M   enter
  */
 
-static void delete(struct editline_state *state, int pos, int len) {
+static void delete_chars(struct editline_state *state, int pos, int len)
+{
         if (pos < 0) {
                 len += pos;
                 pos = 0;
         }
         if (pos + len > (int)state->len)
                 len = (int)state->len - pos;
-        if(len <= 0)
+        if (len <= 0)
                 return;
-        memmove(editline_buf(state) + pos ,  editline_buf(state) + pos + len , state->len - (pos + len));
+        memmove(state->buf + pos, state->buf + pos + len, state->len - (pos + len));
         state->len -= len;
 }
-static void move_cursor_to(struct editline_state *state, int pos) {
+static void move_cursor_to(struct editline_state *state, int pos)
+{
         if (pos < 0)
                 pos = 0;
         if (pos > state->len)
                 pos = state->len;
         move_cursor(pos - state->pos);
         state->pos = pos;
-
 }
+
+
 static int
 editline_char(struct editline_state *state, unsigned char ch)
 {
         unsigned char npos = state->pos;
         switch (ch) {
-        case CTL('D'):
-                if (state->pos == 0 && state->len == 0)
-                        return EL_EXIT;
-                if (state->pos >= state->len)
-                        return EL_NOTHING;
-                delete(state, state->pos, 1);
-                print_rest(state);
-                return EL_NOTHING;
         case CTL('L'):
                 editline_redraw(state);
                 return EL_REDRAW;
-        case 0177:
+        case CTL('D'):
+                if (state->pos == 0 && state->len == 0)
+                        return EL_EXIT;
+                delete_chars(state, state->pos, 1);
+                print_rest(state);
+                break;
+        case 0x7f:
         case CTL('H'):
                 if (!state->pos)
                         return EL_NOTHING;
-                editline_putchar('\b');
-                delete(state, state->pos - 1, 1);
-                state->pos--;
+                move_cursor_to(state, state->pos - 1);
+                delete_chars(state, state->pos, 1);
                 print_rest(state);
-                return EL_NOTHING;
+                break;
         case CTL('A'):
                 move_cursor_to(state, 0);
                 break;
@@ -282,22 +295,86 @@ editline_char(struct editline_state *state, unsigned char ch)
         case CTL('B'):
                 move_cursor_to(state, state->pos - 1);
                 break;
+        case ALT('T'):
+        case CTL('R'):
+                memrot(state->buf + npos, 3, state->len - npos);
+//                memrev(state->buf, state->len);
+                redraw_current_command(state);
+                break;
         case META('f'):
-                while(npos < state->len && state->buf[npos] != ' ')
+                while (npos < state->len && state->buf[npos] != ' ')
                         npos++;
-                while(npos < state->len && state->buf[npos] == ' ')
+                while (npos < state->len && state->buf[npos] == ' ')
                         npos++;
                 move_cursor_to(state, npos);
                 break;
         case META('b'):
-                while(npos > 0 && state->buf[npos] != ' ')
+                while (npos > 0 && state->buf[npos] != ' ')
                         npos--;
-                while(npos > 0 && state->buf[npos] == ' ')
+                while (npos > 0 && state->buf[npos] == ' ')
                         npos--;
-                while(npos > 0 && state->buf[npos - 1] != ' ')
+                while (npos > 0 && state->buf[npos - 1] != ' ')
                         npos--;
                 move_cursor_to(state, npos);
                 break;
+        case META('u'):
+        case META('c'):
+        case META('l'):
+        case META('d'):
+                while (npos < state->len && state->buf[npos] == ' ')
+                        npos++;
+                while (npos < state->len && state->buf[npos] != ' ')
+                        npos++;
+                if (npos == state->pos)
+                        break;
+                if (ch == META('d')) {
+                        delete_chars(state, state->pos, npos - state->pos);
+                        print_rest(state);
+                        break;
+                }
+                int i = state->pos;
+                while (i < state->len && state->buf[i] == ' ')
+                        i++;
+                state->buf[i] = toupper(state->buf[i]);
+                if (ch == META('c')) {
+                        ch = META('l');
+                        i++;
+                }
+                if (ch == META('u'))
+                        for (; i < npos; i++)
+                                state->buf[i] = toupper(state->buf[i]);
+                else if (ch == META('l'))
+                        for (; i < npos; i++)
+                                state->buf[i] = tolower(state->buf[i]);
+                print_rest(state);
+                move_cursor_to(state, npos);
+                break;
+        case META(CTL('H')):
+        case META(0x7f):
+        case CTL('W'):
+                npos--;
+                while (npos > 0 && state->buf[npos] == ' ')
+                        npos--;
+                while (npos > 0 && state->buf[npos] != ' ')
+                        npos--;
+                delete_chars(state, npos, state->pos - npos);
+                move_cursor_to(state, npos);
+                print_rest(state);
+                break;
+        case CTL('T'): {
+                if (npos == state->len)
+                        npos--;
+                if (npos < 1 || state->len < 2)
+                        break;
+                npos--;
+                move_cursor_to(state, npos);
+                char tmp = state->buf[npos];
+                state->buf[npos] = state->buf[npos + 1];
+                state->buf[npos + 1] = tmp;
+                print_rest(state);
+                move_cursor_to(state, npos + 2);
+                break;
+        }
         case CTL('K'):
                 state->len = state->pos;
                 csi('K');
@@ -319,7 +396,7 @@ editline_char(struct editline_state *state, unsigned char ch)
                 }
         }
         break;
-        // debug
+                // debug
 #ifdef EDITLINE_DEBUG
         case CTL('V'):
                 putchar('\r');
@@ -338,7 +415,7 @@ editline_char(struct editline_state *state, unsigned char ch)
                 break;
 #endif
         case CTL('U'):
-                delete(state, 0, state->pos);
+                delete_chars(state, 0, state->pos);
                 move_cursor_to(state, 0);
                 print_rest(state);
                 break;
@@ -350,8 +427,7 @@ editline_char(struct editline_state *state, unsigned char ch)
                 editline_buf(state)[state->len] = 0;
                 state->pos = 0;
                 state->len = 0;
-                putchar('\r');
-                putchar('\n');
+                putchar2('\r', '\n');
                 add_history(state, editline_buf(state));
                 return ch == CTL('Q') ? EL_QDATA : EL_DATA;
         default:
@@ -360,7 +436,7 @@ editline_char(struct editline_state *state, unsigned char ch)
                 state->len++;
                 memmove(editline_buf(state) + state->pos + 1,  editline_buf(state) + state->pos, state->len - state->pos - 1);
                 editline_buf(state)[state->pos++] = ch;
-                putchar(ch);
+                editline_putchar(ch);
                 print_rest(state);
         }
         return EL_NOTHING;

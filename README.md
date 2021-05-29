@@ -25,16 +25,16 @@ consisting of mainly the buffer.
         ^M (Enter)       - enter command
         ALT-f            - forward to next word
         ALT-b            - backwards to previous word
-
-        // todo
         ^W               - delete to beginning of current word
-        ^T               - transpose characters
+        ALT-Backspace    - delete to beginning of current word
+        ^T               - transpose characters, dragging character forward.
         ALT-d            - delete to end of current word
         ALT-u            - uppercase word
         ALT-l            - lowercase word
         ALT-c            - capitalize word
+
+        // todo
         ALT-t            - exchange previous with current word
-        ALT-Backspace    - delete previous word
         ALT-r            - undo changes
 
 
