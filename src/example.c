@@ -15,8 +15,8 @@ int main()
 
         /* we loop here since the terminal may not be connected right away.
          * you can explicitly redraw with ^L too */
-        add_history(&elstate, "0123456789");
-        add_history(&elstate, "hello this is a test of the emergency broadcast system.");
+//        add_history(&elstate, "0123456789");
+ //       add_history(&elstate, "hello this is a test of the emergency broadcast system.");
 
         while(!char_available());
 
@@ -31,12 +31,14 @@ int main()
                         puts("^H backspace");
                         end_statusline(&elstate);
                         continue;
-                case EL_DATA:
+                case EL_COMMAND:
+                        if(elstate.buf[0]) {
                         putchar('<');
                         fputs(elstate.buf, stdout);
                         putchar('>');
                         putchar('\n');
-//                        printf("<%s>\n",elstate.buf);
+                        }
+                        editline_command_complete(&elstate, elstate.buf[0]);
                 default:
                         continue;
                 }

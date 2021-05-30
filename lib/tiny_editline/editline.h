@@ -3,6 +3,7 @@
 
 #include <inttypes.h>
 #include <stdio.h>
+#include <stdbool.h>
 
 // configuration
 #define BUFSIZE 80
@@ -11,6 +12,7 @@
  * ram or speed */
 #define ENABLE_WORDS true
 #define ENABLE_HISTORY (HISTSIZE > 0)
+#define PROMPT  ';'
 
 /* META-k can be typed as ALT-k or ESC k */
 #define CTL(x)          ((x) & 0x1F)
@@ -23,10 +25,8 @@
 // action.
 enum {
         EL_NOTHING = 0,
-        EL_EXIT,        // got EOF
         EL_REDRAW,      // screen has been cleared and redrawn.
-        EL_DATA,        // a full command is ready in editline_buf
-        EL_QDATA,       // data that was aborted via ^Q
+        EL_COMMAND,     // a full command is ready in editline_buf
         EL_UNKNOWN      // unknown control or alt code, value stored in key.
 };
 
@@ -73,6 +73,7 @@ void reserve_statuslines(struct editline_state *state, int n);
 // EL_EXIT, EL_REDRAW, or EL_DATA
 int got_char(struct editline_state *s, char ch);
 
+void editline_command_complete(struct editline_state *state, bool add_to_history);
 void add_history(struct editline_state *, char *data);
 
 #endif
