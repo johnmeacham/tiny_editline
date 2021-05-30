@@ -111,11 +111,13 @@ static void memswap(char *mem, size_t x, size_t y, size_t z)
 
 
 
-void editline_hide_command(struct editline *s) {
+void editline_hide_command(struct editline *s)
+{
         user_putchar('\r');
         csi('K');
 }
-void editline_restore_command(struct editline *s) {
+void editline_restore_command(struct editline *s)
+{
         redraw_current_command(s);
 }
 
