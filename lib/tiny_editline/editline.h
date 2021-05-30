@@ -26,11 +26,11 @@
 enum {
         EL_NOTHING = 0,
         EL_REDRAW,      // screen has been cleared and redrawn.
-        EL_COMMAND,     // a full command is ready in editline_buf
+        EL_COMMAND,     // a full command is ready in the buffer
         EL_UNKNOWN      // unknown control or alt code, value stored in key.
 };
 
-struct editline_state {
+struct editline {
         // buffer
         uint8_t pos, len;
         char buf[BUFSIZE];
@@ -45,35 +45,39 @@ struct editline_state {
         char key;
 };
 
-#define EDITLINE_STATE_INIT { 0 }
+#define EDITLINE_INIT { 0 }
 
-static inline char *editline_buf(struct editline_state *state)
-{
-        return state->buf;
-}
+// This should be implemented by the user of the library.
+void user_putchar(char ch);
+// call this for each character typed and take action based on the return value.
+int editline_process_char(struct editline *s, char ch);
+
+// these can be used to hide and restore the current command, so that you may
+// write to the screen without interfering.
+void editline_hide_command(struct editline *s);
+void editline_restore_command(struct editline *s);
+
+// clear screen and set up terminal manually. Alternatively you can arrange to
+// pass ^L to editline_process_char.
+void editline_redraw(struct editline *state);
+
+// Status line routines to display a fixed amount of data at the top of the
+// screen that is not affected by scrolling.
+//
+// These should be called after a EL_REDRAW event since it will have cleared the
+// status line state.
+//
+// if reserve_statuslines is not called then the lines will be clobbered when
+// the terminal scrolls.
+void reserve_statuslines(struct editline *state, int n);
+void begin_statusline(struct editline *state, int n);
+void end_statusline(struct editline *state);
 
 
-// should be provided by user.
-void editline_putchar(char ch);
-//#define editline_putchar(ch) putchar(ch)
+// call this after an EL_COMMAND was returned once you are done processing it.
+void editline_command_complete(struct editline *state, bool add_to_history);
 
-// clear screen and set up terminal.
-void editline_redraw(struct editline_state *state);
-// if flag is set, a redraw will be enforced on next character.
-void editline_set_redraw_flag(struct editline_state *state);
-
-// status line routines to display a fixed amount of data at the top of the
-// screen. these should be used in a pair. lines are numbered
-// starting at zero.
-void begin_statusline(struct editline_state *state, int n);
-void end_statusline(struct editline_state *state);
-void reserve_statuslines(struct editline_state *state, int n);
-
-// call this when a new keypress comes in. It will return one of EL_NOTHING,
-// EL_EXIT, EL_REDRAW, or EL_DATA
-int got_char(struct editline_state *s, char ch);
-
-void editline_command_complete(struct editline_state *state, bool add_to_history);
-void add_history(struct editline_state *, char *data);
+// manually add something to history.
+void editline_add_history(struct editline *, char *data);
 
 #endif

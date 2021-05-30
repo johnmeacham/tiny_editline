@@ -37,8 +37,7 @@ consisting of mainly the buffer.
         ALT-a            - move to beginning of current word
         ALT-e            - move to end of current word
 
-        // todo
         ALT-t            - exchange previous with current word
-        ALT-r            - undo changes
+
 
 

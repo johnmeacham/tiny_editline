@@ -10,7 +10,7 @@
 #ifdef EDITLINE_DEBUG
 static void char_show(char c);
 #endif
-static int editline_char(struct editline_state *state, unsigned char ch);
+static int editline_char(struct editline *state, unsigned char ch);
 
 static void putnum(unsigned short n)
 {
@@ -19,33 +19,33 @@ static void putnum(unsigned short n)
                 *s++ = n % 10 + '0';
         } while ((n /= 10) > 0);
         while (s-- != buf)
-                editline_putchar(*s);
+                user_putchar(*s);
 }
 
 static void putchar2(char x, char y)
 {
-        editline_putchar(x);
-        editline_putchar(y);
+        user_putchar(x);
+        user_putchar(y);
 }
 
 static void csi(char ch)
 {
         putchar2('\033', '[');
-        editline_putchar(ch);
+        user_putchar(ch);
 }
 
 static void csi_n(int num, char ch)
 {
         putchar2('\033', '[');
         putnum(num);
-        editline_putchar(ch);
+        user_putchar(ch);
 }
 
 static void show_cursor(bool show)
 {
         csi('?');
         putchar2('2', '5');
-        editline_putchar(show ? 'h' : 'l');
+        user_putchar(show ? 'h' : 'l');
 }
 
 
@@ -56,34 +56,34 @@ static void move_cursor(int8_t n)
 }
 
 static void
-print_from(struct editline_state *state, int pos)
+print_from(struct editline *state, int pos)
 {
         show_cursor(false);
         for (unsigned char i = pos; i < state->len; i++)
-                editline_putchar(editline_buf(state)[i]);
+                user_putchar(state->buf[i]);
         csi('K');
         move_cursor(- (state->len - state->pos));
         show_cursor(true);
 }
 
-static void redraw_current_command(struct editline_state *state)
+static void redraw_current_command(struct editline *state)
 {
         show_cursor(false);
-        editline_putchar('\r');
-        csi_n(92,'m');
-        editline_putchar(PROMPT);
-        csi_n(0,'m');
+        user_putchar('\r');
+        csi_n(92, 'm');
+        user_putchar(PROMPT);
+        csi_n(0, 'm');
         print_from(state, 0);
 }
 
-void editline_redraw(struct editline_state *state)
+void editline_redraw(struct editline *state)
 {
         csi_n(2, 'J');
         redraw_current_command(state);
 }
 
 static void
-print_rest(struct editline_state *state)
+print_rest(struct editline *state)
 {
         print_from(state, state->pos);
 }
@@ -109,26 +109,37 @@ static void memswap(char *mem, size_t x, size_t y, size_t z)
         memrev(mem, x + y + z);
 }
 
+
+
+void editline_hide_command(struct editline *s) {
+        user_putchar('\r');
+        csi('K');
+}
+void editline_restore_command(struct editline *s) {
+        redraw_current_command(s);
+}
+
 /* should be called after redraw each time to ensure your status lines don't get
  * clobbered by scrolling */
-void reserve_statuslines(struct editline_state *state, int n) {
+void reserve_statuslines(struct editline *state, int n)
+{
         csi_n(n + 1, ';');
         putchar2('9', '9');
         putchar2('9', 'r');
 }
 
-void begin_statusline(struct editline_state *state, int n)
+void begin_statusline(struct editline *state, int n)
 {
         show_cursor(false);
         csi_n(n + 1, 'H');
-        editline_putchar('\r');
+        user_putchar('\r');
 }
 
-void end_statusline(struct editline_state *state)
+void end_statusline(struct editline *state)
 {
         csi('K');
         csi_n(999, 'H');
-        editline_putchar('\r');
+        user_putchar('\r');
         move_cursor(state->pos + 1);
         show_cursor(true);
 }
@@ -149,7 +160,7 @@ void end_statusline(struct editline_state *state)
  * delete        ^D   (delete char)
  *
  * */
-int got_char(struct editline_state *s, char ch)
+int editline_process_char(struct editline *s, char ch)
 {
         if (!s->escape)  {
                 if (ch == CTL('[')) {
@@ -213,7 +224,7 @@ int got_char(struct editline_state *s, char ch)
  * ^M   enter
  */
 
-static void delete_chars(struct editline_state *state, int pos, int len)
+static void delete_chars(struct editline *state, int pos, int len)
 {
         if (pos < 0) {
                 len += pos;
@@ -226,7 +237,7 @@ static void delete_chars(struct editline_state *state, int pos, int len)
         memmove(state->buf + pos, state->buf + pos + len, state->len - (pos + len));
         state->len -= len;
 }
-static void move_cursor_to(struct editline_state *state, int pos)
+static void move_cursor_to(struct editline *state, int pos)
 {
         if (pos < 0)
                 pos = 0;
@@ -237,17 +248,17 @@ static void move_cursor_to(struct editline_state *state, int pos)
 }
 
 /* look for word boundries */
-static bool is_bow(struct editline_state *s, int p)
+static bool is_bow(struct editline *s, int p)
 {
         return p <= 0 || (p < s->len && s->buf[p - 1] == ' ' && s->buf[p] != ' ');
 }
-static bool is_eow(struct editline_state *s, int p)
+static bool is_eow(struct editline *s, int p)
 {
         return p >= s->len || (p > 0 && s->buf[p - 1] != ' ' && s->buf[p] == ' ');
 }
 
 
-static uint8_t search_eow(struct editline_state *state, int npos)
+static uint8_t search_eow(struct editline *state, int npos)
 {
         if (npos > state->len)
                 return state->len;
@@ -256,7 +267,7 @@ static uint8_t search_eow(struct editline_state *state, int npos)
         return npos;
 }
 
-static uint8_t search_bow(struct editline_state *state, int npos)
+static uint8_t search_bow(struct editline *state, int npos)
 {
         if (npos < 0)
                 return 0;
@@ -267,7 +278,7 @@ static uint8_t search_bow(struct editline_state *state, int npos)
 
 
 static int
-editline_char(struct editline_state *state, unsigned char ch)
+editline_char(struct editline *state, unsigned char ch)
 {
         state->key = ch;
         unsigned char npos = state->pos;
@@ -423,21 +434,22 @@ editline_char(struct editline_state *state, unsigned char ch)
                 if (state->len >= BUFSIZE - 1)
                         return EL_NOTHING;
                 state->len++;
-                memmove(editline_buf(state) + state->pos + 1,  editline_buf(state) + state->pos, state->len - state->pos - 1);
-                editline_buf(state)[state->pos++] = ch;
-                editline_putchar(ch);
+                memmove(state->buf + state->pos + 1,  state->buf + state->pos, state->len - state->pos - 1);
+                state->buf[state->pos++] = ch;
+                user_putchar(ch);
                 print_rest(state);
         }
         return EL_NOTHING;
 }
 
-void editline_command_complete(struct editline_state *state, bool add_to_history) {
-        if(add_to_history)
-                add_history(state, state->buf);
+void editline_command_complete(struct editline *state, bool add_to_history)
+{
+        if (add_to_history)
+                editline_add_history(state, state->buf);
         redraw_current_command(state);
 }
 
-void add_history(struct editline_state *s, char *data)
+void editline_add_history(struct editline *s, char *data)
 {
 #if ENABLE_HISTORY
         if (!data[0])
@@ -460,17 +472,17 @@ void
 char_show(char c)
 {
         if (ISCTL(c)) {
-                editline_putchar('^');
+                user_putchar('^');
                 char_show(UNCTL(c));
         } else if (ISMETA(c)) {
-                editline_putchar('M');
-                editline_putchar('-');
+                user_putchar('M');
+                user_putchar('-');
                 char_show(UNMETA(c));
         } else if (c == '\177') {
                 putchar2('\\', '1');
                 putchar2('7', '7');
         } else
-                editline_putchar(c);
+                user_putchar(c);
 }
 #endif
 
