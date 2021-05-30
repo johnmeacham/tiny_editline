@@ -57,6 +57,7 @@ static void move_cursor(int8_t n)
 
 static void redraw_current_command(struct editline_state *state)
 {
+        show_cursor(false);
         editline_putchar('\r');
         csi_n(999, 'H');
         for (unsigned char i = 0; i < state->len; i++)
@@ -64,25 +65,14 @@ static void redraw_current_command(struct editline_state *state)
         csi('K');
         editline_putchar('\r');
         move_cursor(state->pos);
+        show_cursor(true);
 }
 
 void editline_redraw(struct editline_state *state)
 {
-        show_cursor(false);
         csi_n(2, 'J');
-        if (STATUSLINES) {
-                csi_n(STATUSLINES + 2, ';');
-                putchar2('9', '9');
-                putchar2('9', 'r');
-                csi_n(STATUSLINES + 1, 'H');
-                for (char i = 0; i < 10; i++)
-                        editline_putchar('-');
-        }
         redraw_current_command(state);
-        show_cursor(true);
 }
-
-
 
 static void
 print_rest(struct editline_state *state)
@@ -96,7 +86,7 @@ print_rest(struct editline_state *state)
 }
 
 /* reverse memory in place */
-void memrev(char *mem, int len)
+static void memrev(char *mem, size_t len)
 {
         for (int i = 0; i < len >> 1; i++) {
                 char tmp = mem[i];
@@ -105,17 +95,25 @@ void memrev(char *mem, int len)
         }
 }
 
-/* rotate memory in place */
-/* swap the next x characters with the y characters after it */
-void memrot(char *mem, int x, int y)
+
+/* generalization of rotation, swap the x characters with the z characters
+ * separated by y characters. Turns X | Y | Z  into Z | Y | X. */
+static void memswap(char *mem, size_t x, size_t y, size_t z)
 {
         memrev(mem, x);
         memrev(mem + x, y);
-        memrev(mem, x + y);
+        memrev(mem + x + y, z);
+        memrev(mem, x + y + z);
 }
 
+/* should be called after redraw each time to ensure your status lines don't get
+ * clobbered by scrolling */
+void reserve_statuslines(struct editline_state *state, int n) {
+        csi_n(n + 1, ';');
+        putchar2('9', '9');
+        putchar2('9', 'r');
+}
 
-#if STATUSLINES
 void begin_statusline(struct editline_state *state, int n)
 {
         show_cursor(false);
@@ -131,7 +129,6 @@ void end_statusline(struct editline_state *state)
         move_cursor(state->pos);
         show_cursor(true);
 }
-#endif
 
 /* this translates terminal codes for special keys to
  * the functionally equivalent control codes.
@@ -236,17 +233,17 @@ static void move_cursor_to(struct editline_state *state, int pos)
         state->pos = pos;
 }
 
+/* look for word boundries */
 static bool is_bow(struct editline_state *s, int p)
 {
-        return p <= 0 || p < s->len && s->buf[p - 1] == ' ' && s->buf[p] != ' ';
+        return p <= 0 || (p < s->len && s->buf[p - 1] == ' ' && s->buf[p] != ' ');
 }
 static bool is_eow(struct editline_state *s, int p)
 {
-        return p >= s->len || p > 0 && s->buf[p - 1] != ' ' && s->buf[p] == ' ';
+        return p >= s->len || (p > 0 && s->buf[p - 1] != ' ' && s->buf[p] == ' ');
 }
 
-/* search for word boundry, either end of word searching forward or beginning of
- * word searching backwards. */
+
 static uint8_t search_eow(struct editline_state *state, int npos)
 {
         if (npos > state->len)
@@ -256,8 +253,6 @@ static uint8_t search_eow(struct editline_state *state, int npos)
         return npos;
 }
 
-/* search for word boundry, either end of word searching forward or beginning of
- * word searching backwards. */
 static uint8_t search_bow(struct editline_state *state, int npos)
 {
         if (npos < 0)
@@ -291,53 +286,15 @@ editline_char(struct editline_state *state, unsigned char ch)
                 delete_chars(state, state->pos, 1);
                 print_rest(state);
                 break;
-        case CTL('A'):
-                move_cursor_to(state, 0);
-                break;
-        case CTL('E'):
-                move_cursor_to(state, state->len);
-                break;
-        case CTL('F'):
-                move_cursor_to(state, state->pos + 1);
-                break;
-        case CTL('B'):
-                move_cursor_to(state, state->pos - 1);
-                break;
-        case META('t'): {
-                /* find boundries of the two words we are going to swap */
-                int eos = search_eow(state, npos + 1);
-                int bos = search_bow(state, eos);
-                int bof = search_bow(state, bos - 1);
-                int eof = search_eow(state, bof);
-                /* don't drag trailing whitespace with us */
-                while (eos > 0 && state->buf[eos - 1] == ' ')
-                        eos--;
-                if (eof >= bos || bos >= eos)
-                        break;
-                int lof = eof - bof, low = bos - eof, los = eos - bos;
-                memrot(state->buf + bof, lof, low);
-                memrot(state->buf + bof + low, lof, los);
-                memrot(state->buf + bof, low, los);
-                redraw_current_command(state);
-                move_cursor_to(state, eos);
-                break;
-        }
-        case META('f'):
-                npos = search_eow(state, npos + 1);
-                move_cursor_to(state, npos);
-                break;
-        case META('b'):
-                npos = search_bow(state, npos - 1);
-                move_cursor_to(state, npos);
-                break;
-        case META('a'):
-                npos = search_bow(state, npos);
-                move_cursor_to(state, npos);
-                break;
-        case META('e'):
-                npos = search_eow(state, npos);
-                move_cursor_to(state, npos);
-                break;
+        case CTL('F'): move_cursor_to(state, npos + 1); break;
+        case CTL('B'): move_cursor_to(state, npos - 1); break;
+        case CTL('A'): move_cursor_to(state, 0); break;
+        case CTL('E'): move_cursor_to(state, state->len); break;
+#if ENABLE_WORDS
+        case META('f'): move_cursor_to(state, search_eow(state, npos + 1)); break;
+        case META('b'): move_cursor_to(state, search_bow(state, npos - 1)); break;
+        case META('a'): move_cursor_to(state, search_bow(state, npos)); break;
+        case META('e'): move_cursor_to(state, search_eow(state, npos)); break;
         case META('d'): ;
                 npos = search_eow(state, npos + 1);
                 delete_chars(state, state->pos, npos - state->pos);
@@ -363,6 +320,23 @@ editline_char(struct editline_state *state, unsigned char ch)
                 print_rest(state);
                 move_cursor_to(state, npos);
                 break;
+        case META('t'): {
+                /* find boundries of the two words we are going to swap */
+                int eos = search_eow(state, npos + 1);
+                int bos = search_bow(state, eos);
+                int bof = search_bow(state, bos - 1);
+                int eof = search_eow(state, bof);
+                /* don't drag trailing whitespace with us */
+                while (eos > 0 && state->buf[eos - 1] == ' ')
+                        eos--;
+                if (eof >= bos || bos >= eos)
+                        break;
+                int lof = eof - bof, low = bos - eof, los = eos - bos;
+                memswap(state->buf + bof, lof, low, los);
+                redraw_current_command(state);
+                move_cursor_to(state, eos);
+                break;
+        }
         case META(CTL('H')):
         case META(0x7f):
         case CTL('W'):
@@ -371,16 +345,17 @@ editline_char(struct editline_state *state, unsigned char ch)
                 move_cursor_to(state, npos);
                 print_rest(state);
                 break;
+#endif
         case CTL('T'): {
                 if (npos == state->len)
                         npos--;
                 if (npos < 1 || state->len < 2)
                         break;
                 npos--;
-                move_cursor_to(state, npos);
                 char tmp = state->buf[npos];
                 state->buf[npos] = state->buf[npos + 1];
                 state->buf[npos + 1] = tmp;
+                move_cursor_to(state, npos);
                 print_rest(state);
                 move_cursor_to(state, npos + 2);
                 break;
@@ -389,6 +364,7 @@ editline_char(struct editline_state *state, unsigned char ch)
                 state->len = state->pos;
                 csi('K');
                 break;
+#if ENABLE_HISTORY
         case CTL('P'):
         case CTL('N'): {
                 int8_t inc = ch == CTL('P') ? -1 : 1;
@@ -406,6 +382,7 @@ editline_char(struct editline_state *state, unsigned char ch)
                 }
         }
         break;
+#endif
                 // debug
 #ifdef EDITLINE_DEBUG
         case CTL('V'):
@@ -456,6 +433,7 @@ editline_char(struct editline_state *state, unsigned char ch)
 
 void add_history(struct editline_state *s, char *data)
 {
+#if ENABLE_HISTORY
         if (!data[0])
                 return;
         /* find the end of history */
@@ -468,6 +446,7 @@ void add_history(struct editline_state *s, char *data)
                 s->hist[end  % HISTSIZE] = data[i];
         s->hcur = end % HISTSIZE;
         s->hist[end++ % HISTSIZE] = '\x04';
+#endif
 }
 
 #ifdef EDITLINE_DEBUG

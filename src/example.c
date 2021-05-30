@@ -17,14 +17,19 @@ int main()
          * you can explicitly redraw with ^L too */
         add_history(&elstate, "0123456789");
         add_history(&elstate, "hello this is a test of the emergency broadcast system.");
-        do {
-                editline_redraw(&elstate);
-        }  while(!char_available());
-        for(;;) {
-                switch (got_char(&elstate, getchar())) {
+
+        while(!char_available());
+
+        /* we seed the char with a forced redraw */
+        for(char ch = CTL('L');;ch = getchar()) {
+                switch (got_char(&elstate, ch)) {
                 case EL_REDRAW:
-                        //update_pinstate();
-                        //update_pinread();
+                        reserve_statuslines(&elstate, 4);
+                        begin_statusline(&elstate, 0);
+                        puts("^F forward-char ^B back-char M-f forward-word M-b back-word");
+                        puts("^P previous command ^N next command ^A BOL ^E EOL ^D Delete");
+                        puts("^H backspace");
+                        end_statusline(&elstate);
                         continue;
                 case EL_DATA:
                         putchar('<');
