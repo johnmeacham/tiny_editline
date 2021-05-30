@@ -1,3 +1,6 @@
+# backup
+*.orig
+
 # Prerequisites
 *.d
 
