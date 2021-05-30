@@ -15,12 +15,12 @@
 #define PROMPT  ';'
 
 /* META-k can be typed as ALT-k or ESC k */
-#define CTL(x)          ((x) & 0x1F)
-#define ISCTL(x)        (CTL(x) == (x))
-#define UNCTL(x)        ((x) + 64)
-#define META(x)         ((x) | 0x80)
-#define ISMETA(x)       (!!((x) & 0x80))
-#define UNMETA(x)       ((x) & 0x7F)
+#define CTL(x)          (char)((x) & 0x1F)
+#define ISCTL(x)        (!((x) & ~0x1f))
+#define UNCTL(x)        (char)((x) + 64)
+#define META(x)         (char)((x) | 0x80)
+#define ISMETA(x)       (bool)((x) & 0x80)
+#define UNMETA(x)       (char)((x) & 0x7F)
 
 // action.
 enum {
@@ -79,5 +79,8 @@ void editline_command_complete(struct editline *state, bool add_to_history);
 
 // manually add something to history.
 void editline_add_history(struct editline *, char *data);
+
+// print a character in ^ or M- form, handy for debugging input.
+void debug_char_show(char ch);
 
 #endif

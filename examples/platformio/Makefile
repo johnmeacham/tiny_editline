@@ -2,7 +2,7 @@ build:
 	pio run
 
 upload:
-	pio run -t upload
+	pio run -e uno -t upload
 
 connect: upload
 	cu --nostop -f -l /dev/ttyUSB0 -s 38400

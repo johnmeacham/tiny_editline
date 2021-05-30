@@ -25,9 +25,9 @@ int main()
                         begin_statusline(&elstate, 1);
                         puts("^P previous command ^N next command ^A BOL ^E EOL ^D Delete");
                         begin_statusline(&elstate, 2);
-                        puts("^H backspace");
+                        puts("^H backspace M-q to exit example.");
                         end_statusline(&elstate);
-                        continue;
+                        break;
                 case EL_COMMAND:
                         if (elstate.buf[0]) {
                                 putchar('<');
@@ -36,12 +36,16 @@ int main()
                                 putchar('\n');
                         }
                         editline_command_complete(&elstate, elstate.buf[0]);
-                case EL_NOTHING:
-                        /* quit on control d with empty line */
-                        if (elstate.key == CTL('D') && !elstate.len && !elstate.pos)
+                        break;
+                case EL_UNKNOWN:
+                        /* quit on meta-q */
+                        if (elstate.key == META('q')) {
+                                puts("key return ");
                                 return 0;
+                        }
+                        break;
                 default:
-                        continue;
+                        break;
                 }
         }
         return 0;

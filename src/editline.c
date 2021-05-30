@@ -7,10 +7,7 @@
 #include <stdbool.h>
 
 
-#ifdef EDITLINE_DEBUG
-static void char_show(char c);
-#endif
-static int editline_char(struct editline *state, unsigned char ch);
+static int editline_char(struct editline *state, char ch);
 
 static void putnum(unsigned short n)
 {
@@ -280,7 +277,7 @@ static uint8_t search_bow(struct editline *state, int npos)
 
 
 static int
-editline_char(struct editline *state, unsigned char ch)
+editline_char(struct editline *state, char ch)
 {
         state->key = ch;
         unsigned char npos = state->pos;
@@ -401,12 +398,12 @@ editline_char(struct editline *state, unsigned char ch)
                 putchar('\n');
                 printf("pos: %i hend: %i hcur: %i len: %i\r\n", state->pos, state->hend, state->hcur, state->len);
                 for (int i = 0; i < BUFSIZE; i++)
-                        char_show(state->buf[i]);
+                        debug_char_show(state->buf[i]);
                 putchar('\r');
                 putchar('\n');
                 putchar('\n');
                 for (int i = 0; i < HISTSIZE; i++)
-                        char_show(state->hist[i]);
+                        debug_char_show(state->hist[i]);
                 putchar('\r');
                 putchar('\n');
                 redraw_current_command(state);
@@ -469,23 +466,21 @@ void editline_add_history(struct editline *s, char *data)
 #endif
 }
 
-#ifdef EDITLINE_DEBUG
+/* show a printable version of char */
 void
-char_show(char c)
+debug_char_show(char c)
 {
         if (ISCTL(c)) {
                 user_putchar('^');
-                char_show(UNCTL(c));
+                debug_char_show(UNCTL(c));
         } else if (ISMETA(c)) {
                 user_putchar('M');
                 user_putchar('-');
-                char_show(UNMETA(c));
+                debug_char_show(UNMETA(c));
         } else if (c == '\177') {
-                putchar2('\\', '1');
-                putchar2('7', '7');
+                putchar2('^', '?');
         } else
                 user_putchar(c);
 }
-#endif
 
 
