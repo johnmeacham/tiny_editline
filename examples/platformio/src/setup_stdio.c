@@ -30,7 +30,7 @@ setup_stdio(void)
 {
         power_usart0_enable();
 #undef BAUD
-#define BAUD 38400
+#define BAUD 1200
 #include <util/setbaud.h>
         UBRR0H = UBRRH_VALUE;
         UBRR0L = UBRRL_VALUE;
@@ -73,6 +73,7 @@ void setup_stdio(void)
         if (tcgetattr(STDIN_FILENO, &orig_termios) == -1)
                 return;
         struct termios raw = orig_termios;
+        //raw.c_iflag &= ~(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
         raw.c_iflag &= ~(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
         raw.c_oflag &= ~(OPOST);
         raw.c_cflag |= (CS8);

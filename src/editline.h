@@ -1,18 +1,18 @@
 #ifndef EDITLINE_H
 #define EDITLINE_H
 
-#include <inttypes.h>
-#include <stdio.h>
+#include <stdint.h>
 #include <stdbool.h>
 
-// configuration
-#define BUFSIZE 80
-#define HISTSIZE 128
-/* enable all commands dealing with words, adds a bit of code but doesn't affect
- * ram or speed */
-#define ENABLE_WORDS true
-#define ENABLE_HISTORY (HISTSIZE > 0)
+// configuration. you can define these to be global variables if you wish them
+// to be configurable at run time.
+#define BUFSIZE 128
 #define PROMPT  ';'
+
+/* enable features that may affect code size */
+#define ENABLE_WORDS   true   /* all word editing commands */
+#define ENABLE_HISTORY true   /* history, ctrl-[pn] */
+#define ENABLE_DEBUG   false  /* debug key & assertions. needs stdio. big!*/
 
 /* META-k can be typed as ALT-k or ESC k */
 #define CTL(x)          (char)((x) & 0x1F)
@@ -31,24 +31,19 @@ enum {
 };
 
 struct editline {
+        // key decoding
+        char escape, key;
         // buffer
-        uint8_t pos, len;
+        uint8_t pos, len, hcur;
         char buf[BUFSIZE];
-#if ENABLE_HISTORY
-        // history
-        char hist[HISTSIZE];
-        uint8_t hend, hcur;
-#endif
-        // escape state
-        uint8_t escape;
-        // last key pressed.
-        char key;
 };
 
-#define EDITLINE_INIT { 0 }
+#define EDITLINE_INIT {  0 }
 
-// This should be implemented by the user of the library.
+
+// These should be implemented by the user of the library.
 void user_putchar(char ch);
+
 // call this for each character typed and take action based on the return value.
 int editline_process_char(struct editline *s, char ch);
 
@@ -73,14 +68,10 @@ void reserve_statuslines(struct editline *state, int n);
 void begin_statusline(struct editline *state, int n);
 void end_statusline(struct editline *state);
 
-
 // call this after an EL_COMMAND was returned once you are done processing it.
 void editline_command_complete(struct editline *state, bool add_to_history);
 
-// manually add something to history.
-void editline_add_history(struct editline *, char *data);
-
-// print a character in ^ or M- form, handy for debugging input.
-void debug_char_show(char ch);
+// print a character using color to indicate control/meta status
+void debug_color_char(char c);
 
 #endif

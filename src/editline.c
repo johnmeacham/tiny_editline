@@ -1,13 +1,36 @@
+#define _GNU_SOURCE 1
+
 #include "editline.h"
 
-#include <ctype.h>
-#include <stdio.h>
-#include <stdlib.h>
+#if !ENABLE_DEBUG
+#define NDEBUG
+#endif
+
 #include <string.h>
-#include <stdbool.h>
+#include <ctype.h>
+#include <assert.h>
 
 
 static int editline_char(struct editline *state, char ch);
+typedef uint8_t bufptr_t;
+
+static char *buf(struct editline *s)
+{
+#if ENABLE_HISTORY
+        return s->buf + s->hcur;
+#else
+        return s->buf;
+#endif
+}
+
+/* terminal commands */
+
+static void putchar2(char x, char y)
+{
+        user_putchar(x);
+        user_putchar(y);
+}
+
 
 static void putnum(unsigned short n)
 {
@@ -19,22 +42,23 @@ static void putnum(unsigned short n)
                 user_putchar(*s);
 }
 
-static void putchar2(char x, char y)
-{
-        user_putchar(x);
-        user_putchar(y);
-}
-
-static void csi(char ch)
-{
-        putchar2('\033', '[');
-        user_putchar(ch);
-}
 
 static void csi_n(int num, char ch)
 {
         putchar2('\033', '[');
         putnum(num);
+        user_putchar(ch);
+}
+
+/* static void csi_nn(int x, int y,  char ch) { */
+/*         csi_n(x,';'); */
+/*         putnum(y); */
+/*         user_putchar(ch); */
+/* } */
+
+static void csi(char ch)
+{
+        putchar2('\033', '[');
         user_putchar(ch);
 }
 
@@ -53,24 +77,35 @@ static void move_cursor(int8_t n)
 }
 
 static void
-print_from(struct editline *state, int pos)
+print_from(struct editline *state, bufptr_t pos)
 {
         show_cursor(false);
-        for (unsigned char i = pos; i < state->len; i++)
-                user_putchar(state->buf[i]);
+        bufptr_t cpos = pos;
+        for (; state->buf[cpos]; cpos++)
+                user_putchar(state->buf[cpos]);
         csi('K');
-        move_cursor(- (state->len - state->pos));
+        move_cursor(- (cpos - pos));
         show_cursor(true);
 }
 
-static void redraw_current_command(struct editline *state)
+static void
+redraw_current_command(struct editline *state)
 {
         show_cursor(false);
         user_putchar('\r');
         csi_n(92, 'm');
         user_putchar(PROMPT);
-        csi_n(0, 'm');
-        print_from(state, 0);
+        csi('m');
+        print_from(state, state->hcur);
+        move_cursor(state->pos);
+}
+
+/* assume cursor is at state->pos and we are on hcur */
+static void
+print_rest(struct editline *state)
+{
+        assert(!state->hcur);
+        print_from(state, state->pos);
 }
 
 void editline_redraw(struct editline *state)
@@ -79,11 +114,6 @@ void editline_redraw(struct editline *state)
         redraw_current_command(state);
 }
 
-static void
-print_rest(struct editline *state)
-{
-        print_from(state, state->pos);
-}
 
 /* reverse memory in place */
 static void memrev(char *mem, size_t len)
@@ -106,7 +136,48 @@ static void memswap(char *mem, size_t x, size_t y, size_t z)
         memrev(mem, x + y + z);
 }
 
+/* saturating */
+static bufptr_t nhistory(struct editline *s, bufptr_t chp, int n)
+{
+        char *ch = s->buf + chp;
+        if (n > 0) {
+                char *limit = s->buf + BUFSIZE;
+                char *cz = memchr(ch, 0, limit - ch);
+                assert(cz);
+                assert(cz < limit);
+                for (; n > 0; n--) {
+                        if (cz + 1 >= limit || !cz[1] || cz[1] == '\177')
+                                break;
+                        char *nz = memchr(cz + 1, 0, limit - (cz + 1));
+                        if (!nz)
+                                break;
+                        ch = cz + 1;
+                        cz = nz;
+                }
+        } else {
+                for (; n < 0; n++) {
+                        assert(ch >= s->buf);
+                        if (ch == s->buf)
+                                break;
+                        char *nz = memrchr(s->buf, 0, ch - s->buf - 1);
+                        if (!nz)
+                                ch = s->buf;
+                        else
+                                ch = nz + 1;
+                }
+        }
+        return ch - s->buf;
+}
 
+/*
+ * Return items from history or NULL if no entry exists. Slot zero always has the
+ * current command being edited.
+ */
+
+char *editline_history(struct editline *s, int n)
+{
+        return s->buf + nhistory(s, 0, n);
+}
 
 void editline_hide_command(struct editline *s)
 {
@@ -206,36 +277,69 @@ int editline_process_char(struct editline *s, char ch)
         return EL_NOTHING;
 }
 
-/* Interpret keycodes, compatible with emacs and command line.
- *
- * ^P   previous line   (up)
- * ^N   next line       (down)
- * ^F   forward char    (right)
- * ^B   back char       (left)
- * ^A   beginning of line  (home)
- * ^E   end of line        (end)
- * ^D   delete char     (delete)
- * ^H   backspace       (backspace)
- * ^Q   delete whole line (perhaps adding it to history)
- * ^K   delete from cursor until end of line
- * ^U   delete from cursor until beginning of line
- * ^L   redraw screen
- * ^M   enter
- */
+static void raw_insert(struct editline *s, int pos, int len)
+{
+        memmove(s->buf + pos + len, s->buf + pos, BUFSIZE - (pos + len));
+        memset(s->buf + pos, ' ', len);
+}
+
+static void raw_delete(struct editline *s, int pos, int len)
+{
+        memmove(s->buf + pos, s->buf + pos + len, BUFSIZE - (pos + len));
+        memset(s->buf + BUFSIZE - (pos + len), '\177', pos + len);
+}
+
+static void realize_history(struct editline *state, bool always_promote)
+{
+        if (!state->hcur)
+                return;
+        int cl = strlen(state->buf) + 1;
+        raw_delete(state, 0, cl);
+        state->hcur -= cl;
+        if (!state->hcur && always_promote)
+                return;
+        int hl = strlen(state->buf + state->hcur) + 1;
+        if (always_promote || state->hcur + 2 * hl  >= BUFSIZE) {
+                //memswap(state->buf, cl + 1, state->hcur - (cl + 1), hl + 1);
+                memswap(state->buf, 0, state->hcur, hl);
+        } else {
+                raw_insert(state, 0, hl);
+                memcpy(state->buf, state->buf + state->hcur + hl, hl);
+        }
+        state->hcur = 0;
+        assert(state->len == hl - 1);
+}
 
 static void delete_chars(struct editline *state, int pos, int len)
 {
-        if (pos < 0) {
-                len += pos;
-                pos = 0;
-        }
-        if (pos + len > (int)state->len)
-                len = (int)state->len - pos;
+        realize_history(state, false);
+        assert(pos >= 0);
+        assert(pos + len <= state->len);
+        assert(pos + len < BUFSIZE);
+        /* if (pos < 0) { */
+        /*         len += pos; */
+        /*         pos = 0; */
+        /* } */
+        /* if (pos + len > (int)state->len) */
+        /*         len = (int)state->len - pos; */
         if (len <= 0)
                 return;
-        memmove(state->buf + pos, state->buf + pos + len, state->len - (pos + len));
+        raw_delete(state, pos, len);
         state->len -= len;
 }
+
+
+/* pads with spaces, pos may be greater than len */
+static bool insert_chars(struct editline *state, int pos, int len)
+{
+        realize_history(state, false);
+        if (len + state->len >= BUFSIZE - 1)
+                return false;
+        raw_insert(state, pos, len);
+        state->len += len;
+        return true;
+}
+
 static void move_cursor_to(struct editline *state, int pos)
 {
         if (pos < 0)
@@ -246,35 +350,50 @@ static void move_cursor_to(struct editline *state, int pos)
         state->pos = pos;
 }
 
-/* look for word boundries */
+/* look for word boundries, these take absolute positions in the buffer. */
 static bool is_bow(struct editline *s, int p)
 {
-        return p <= 0 || (p < s->len && s->buf[p - 1] == ' ' && s->buf[p] != ' ');
+        assert(p >= 0);
+        char a = p ? s->buf[p - 1] : 0, b = s->buf[p];
+        return !a || (a == ' ' && b && b != a);
 }
 static bool is_eow(struct editline *s, int p)
 {
-        return p >= s->len || (p > 0 && s->buf[p - 1] != ' ' && s->buf[p] == ' ');
+        assert(p >= 0);
+        char a = p ? s->buf[p - 1] : 0, b = s->buf[p];
+        return !b || (a && a != b && b == ' ');
 }
 
 
-static uint8_t search_eow(struct editline *state, int npos)
+/* these take local position */
+static uint8_t search_eow(struct editline *state, int npos, bool proper)
 {
-        if (npos > state->len)
-                return state->len;
-        while (!is_eow(state, npos))
+        assert(npos >= 0);
+        if (!buf(state)[npos])
+                return npos;
+        npos += proper;
+        while (!is_eow(state, state->hcur + npos))
                 npos++;
         return npos;
 }
 
-static uint8_t search_bow(struct editline *state, int npos)
+static uint8_t search_bow(struct editline *state, int npos, bool proper)
 {
-        if (npos < 0)
+        assert(npos >= 0);
+        if (npos == 0)
                 return 0;
-        while (!is_bow(state, npos))
+        npos -= proper;
+        while (!is_bow(state, state->hcur + npos))
                 npos--;
         return npos;
 }
 
+static void
+clear_head(struct editline *state)
+{
+        raw_delete(state, 0, strlen(state->buf));
+        state->len = state->pos = state->hcur = 0;
+}
 
 static int
 editline_char(struct editline *state, char ch)
@@ -292,28 +411,30 @@ editline_char(struct editline *state, char ch)
                 move_cursor_to(state, state->pos - 1);
         case CTL('D'):
                 delete_chars(state, state->pos, 1);
-                print_from(state, state->pos);
+                print_rest(state);
+//                print_from(state, state->pos);
                 break;
         case CTL('F'): move_cursor_to(state, npos + 1); break;
         case CTL('B'): move_cursor_to(state, npos - 1); break;
         case CTL('A'): move_cursor_to(state, 0); break;
         case CTL('E'): move_cursor_to(state, state->len); break;
 #if ENABLE_WORDS
-        case META('f'): move_cursor_to(state, search_eow(state, npos + 1)); break;
-        case META('b'): move_cursor_to(state, search_bow(state, npos - 1)); break;
-        case META('a'): move_cursor_to(state, search_bow(state, npos)); break;
-        case META('e'): move_cursor_to(state, search_eow(state, npos)); break;
-        case META('d'): ;
-                npos = search_eow(state, npos + 1);
+        case META('f'): move_cursor_to(state, search_eow(state, npos, true)); break;
+        case META('b'): move_cursor_to(state, search_bow(state, npos, true)); break;
+        case META('a'): move_cursor_to(state, search_bow(state, npos, false)); break;
+        case META('e'): move_cursor_to(state, search_eow(state, npos, false)); break;
+        case META('d'):
+                npos = search_eow(state, npos, true);
                 delete_chars(state, state->pos, npos - state->pos);
                 print_rest(state);
                 break;
         case META('u'):
         case META('c'):
         case META('l'):
-                npos = search_eow(state, npos + 1);
+                realize_history(state, false);
+                npos = search_eow(state, npos, true);
                 int i = state->pos;
-                while (i < state->len && state->buf[i] == ' ')
+                while (state->buf[i] == ' ')
                         i++;
                 if (ch == META('c') && i < npos) {
                         state->buf[i] = toupper(state->buf[i]);
@@ -329,11 +450,12 @@ editline_char(struct editline *state, char ch)
                 move_cursor_to(state, npos);
                 break;
         case META('t'): {
+                realize_history(state, false);
                 /* find boundries of the two words we are going to swap */
-                int eos = search_eow(state, npos + 1);
-                int bos = search_bow(state, eos);
-                int bof = search_bow(state, bos - 1);
-                int eof = search_eow(state, bof);
+                int eos = search_eow(state, npos, true);
+                int bos = search_bow(state, eos, false);
+                int bof = search_bow(state, bos, true);
+                int eof = search_eow(state, bof, false);
                 /* don't drag trailing whitespace with us */
                 while (eos > 0 && state->buf[eos - 1] == ' ')
                         eos--;
@@ -348,16 +470,17 @@ editline_char(struct editline *state, char ch)
         case META(CTL('H')):
         case META(0x7f):
         case CTL('W'):
-                npos = search_bow(state, npos - 1);
+                npos = search_bow(state, npos, true);
                 delete_chars(state, npos, state->pos - npos);
                 move_cursor_to(state, npos);
                 print_rest(state);
                 break;
 #endif
         case CTL('T'): {
-                if (npos == state->len)
+                realize_history(state, false);
+                if (!state->buf[npos])
                         npos--;
-                if (npos < 1 || state->len < 2)
+                if (npos < 1)
                         break;
                 npos--;
                 char tmp = state->buf[npos];
@@ -369,43 +492,35 @@ editline_char(struct editline *state, char ch)
                 break;
         }
         case CTL('K'):
-                state->len = state->pos;
+                delete_chars(state, state->pos, state->len - state->pos);
+                assert(state->len == state->pos);
+//               state->len = state->pos;
                 csi('K');
                 break;
 #if ENABLE_HISTORY
         case CTL('P'):
-        case CTL('N'): {
-                int8_t inc = ch == CTL('P') ? -1 : 1;
-                for (uint8_t i = state->hcur + inc; state->hist[i % HISTSIZE] != 4; i += inc) {
-                        if (state->hist[i % HISTSIZE] == 1) {
-                                state->hcur = i++ % HISTSIZE;
-                                int j = 0;
-                                while (state->hist[i % HISTSIZE] >= 0x20)
-                                        state->buf[j++] = state->hist[i++ % HISTSIZE];
-                                state->pos = 0;
-                                state->len = j;
-                                redraw_current_command(state);
-                                break;
-                        }
-                }
-        }
-        break;
+        case CTL('N'):
+                state->hcur = nhistory(state, state->hcur, ch == CTL('P') ? 1 : -1);
+                state->len = strlen(buf(state));
+                state->pos = state->len;
+                redraw_current_command(state);
+                break;
 #endif
-                // debug
-#ifdef EDITLINE_DEBUG
+#if ENABLE_DEBUG
         case CTL('V'):
-                putchar('\r');
-                putchar('\n');
-                printf("pos: %i hend: %i hcur: %i len: %i\r\n", state->pos, state->hend, state->hcur, state->len);
+                putchar2('\r', '\n');
+                csi_n(2, 'm');
+                putchar2('p', ':');
+                putnum(state->pos);
+                putchar2('h', ':');
+                putnum(state->hcur);
+                putchar2('l', ':');
+                putnum(state->len);
+                putchar2('\r', '\n');
+                csi('m');
                 for (int i = 0; i < BUFSIZE; i++)
-                        debug_char_show(state->buf[i]);
-                putchar('\r');
-                putchar('\n');
-                putchar('\n');
-                for (int i = 0; i < HISTSIZE; i++)
-                        debug_char_show(state->hist[i]);
-                putchar('\r');
-                putchar('\n');
+                        debug_color_char(state->buf[i]);
+                putchar2('\r', '\n');
                 redraw_current_command(state);
                 break;
 #endif
@@ -417,70 +532,59 @@ editline_char(struct editline *state, char ch)
         case CTL('C'):
                 putchar2('\r', '\n');
         case CTL('Q'):
-                state->buf[state->len] = 0;
-                state->pos = state->len = 0;
+                clear_head(state);
                 redraw_current_command(state);
+                break;
+        case META('v'):;
+                char ins[] = "hello";
+                if (insert_chars(state, state->pos, sizeof(ins) - 1)) {
+                        memcpy(state->buf + state->pos, ins, sizeof(ins) - 1);
+                        print_rest(state);
+                        move_cursor_to(state, state->pos + sizeof(ins) - 1);
+                }
                 break;
         case '\r':
         case '\n':
                 putchar2('\r', '\n');
-                state->buf[state->len] = 0;
-                state->pos = state->len = 0;
+                realize_history(state, true);
                 return  EL_COMMAND;
         default:
                 if (ISMETA(ch) || ISCTL(ch))
                         return EL_UNKNOWN;
-                if (state->len >= BUFSIZE - 1)
-                        return EL_NOTHING;
-                state->len++;
-                memmove(state->buf + state->pos + 1,  state->buf + state->pos, state->len - state->pos - 1);
-                state->buf[state->pos++] = ch;
-                user_putchar(ch);
-                print_rest(state);
+                if (insert_chars(state, state->pos, 1))  {
+                        state->buf[state->pos++] = ch;
+                        user_putchar(ch);
+                        print_rest(state);
+                }
         }
         return EL_NOTHING;
 }
 
 void editline_command_complete(struct editline *state, bool add_to_history)
 {
-        if (add_to_history)
-                editline_add_history(state, state->buf);
+        if (!add_to_history)
+                clear_head(state);
+        if (state->buf[0]) {
+                raw_insert(state, 0, 1);
+                state->buf[0] = 0;
+                state->pos = state->len = 0;
+        }
+        assert(!state->hcur);
         redraw_current_command(state);
 }
 
-void editline_add_history(struct editline *s, char *data)
-{
-#if ENABLE_HISTORY
-        if (!data[0])
-                return;
-        /* find the end of history */
-        uint8_t end = 0;
-        for (; end < HISTSIZE; end++)
-                if (s->hist[end] == '\x04')
-                        break;
-        s->hist[end++ % HISTSIZE] = 1;
-        for (int i = 0; data[i]; i++, end++)
-                s->hist[end  % HISTSIZE] = data[i];
-        s->hcur = end % HISTSIZE;
-        s->hist[end++ % HISTSIZE] = '\x04';
-#endif
-}
-
-/* show a printable version of char */
 void
-debug_char_show(char c)
+debug_color_char(char c)
 {
-        if (ISCTL(c)) {
-                user_putchar('^');
-                debug_char_show(UNCTL(c));
-        } else if (ISMETA(c)) {
-                user_putchar('M');
-                user_putchar('-');
-                debug_char_show(UNMETA(c));
-        } else if (c == '\177') {
-                putchar2('^', '?');
-        } else
-                user_putchar(c);
+        if (ISMETA(c)) {
+                csi_n(7, 'm');
+                c = UNMETA(c);
+        }
+        if (ISCTL(c) || c == '\177') {
+                csi_n(94, 'm');
+                c ^= 64;
+        }
+        user_putchar(c);
+        csi('m');
 }
-
 

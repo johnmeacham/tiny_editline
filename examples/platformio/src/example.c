@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdbool.h>
+#include <string.h>
 #include "editline.h"
 #include "setup_stdio.h"
 
@@ -13,9 +14,9 @@ void user_putchar(char ch)
 int main()
 {
         setup_stdio();
-        /* we loop here since the terminal may not be connected right away. */
+        /* we loop here since we cannot tell if someone is listening on arduino */
         while (!char_available());
-        /* we seed the char with ^L for a forced redraw */
+        /* we seed the char with ^L for a forced initial redraw. */
         for (int ch = CTL('L'); ch != EOF; ch = getchar()) {
                 switch (editline_process_char(&elstate, ch)) {
                 case EL_REDRAW:
@@ -31,22 +32,25 @@ int main()
                 case EL_COMMAND:
                         if (elstate.buf[0]) {
                                 putchar('<');
-                                fputs(elstate.buf, stdout);
+                                for (char *c = elstate.buf; *c; c++)
+                                        putchar(*c);
                                 putchar('>');
                                 putchar('\n');
                         }
-                        editline_command_complete(&elstate, elstate.buf[0]);
+                        editline_command_complete(&elstate, !strchr(elstate.buf, 'x'));
                         break;
                 case EL_UNKNOWN:
                         /* quit on meta-q */
-                        if (elstate.key == META('q')) {
-                                puts("key return ");
+                        if (elstate.key == META('q'))
                                 return 0;
-                        }
                         break;
                 default:
                         break;
                 }
+                begin_statusline(&elstate, 3);
+                debug_color_char(elstate.key);
+                end_statusline(&elstate);
+                fflush(stdout);
         }
         return 0;
 }

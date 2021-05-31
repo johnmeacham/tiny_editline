@@ -1,6 +1,9 @@
 build:
 	pio run
 
+native:
+	pio run -e native
+
 upload:
 	pio run -e uno -t upload
 
