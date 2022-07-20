@@ -6,8 +6,12 @@
 
 // configuration. you can define these to be global variables if you wish them
 // to be configurable at run time.
-#define BUFSIZE 128
-#define PROMPT  ';'
+#ifndef EDITLINE_BUFSIZE
+#define EDITLINE_BUFSIZE 128
+#endif
+#ifndef EDITLINE_PROMPT
+#define EDITLINE_PROMPT  ';'
+#endif
 
 /* enable features that may affect code size */
 #define ENABLE_WORDS   true   /* all word editing commands */
@@ -35,7 +39,7 @@ struct editline {
         char escape, key;
         // buffer
         uint8_t pos, len, hcur;
-        char buf[BUFSIZE];
+        char buf[EDITLINE_BUFSIZE];
 };
 
 #define EDITLINE_INIT {  0 }

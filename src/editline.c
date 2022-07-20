@@ -2,14 +2,13 @@
 
 #include "editline.h"
 
-#if !ENABLE_DEBUG
+#if !ENABLE_DEBUG && !defined(NDEBUG)
 #define NDEBUG
 #endif
 
 #include <string.h>
 #include <ctype.h>
 #include <assert.h>
-
 
 static int editline_char(struct editline *state, char ch);
 typedef uint8_t bufptr_t;
@@ -93,9 +92,11 @@ redraw_current_command(struct editline *state)
 {
         show_cursor(false);
         user_putchar('\r');
-        csi_n(92, 'm');
-        user_putchar(PROMPT);
-        csi('m');
+        if (EDITLINE_PROMPT) {
+                csi_n(92, 'm');
+                user_putchar(EDITLINE_PROMPT);
+                csi('m');
+        }
         print_from(state, state->hcur);
         move_cursor(state->pos);
 }
@@ -141,7 +142,7 @@ static bufptr_t nhistory(struct editline *s, bufptr_t chp, int n)
 {
         char *ch = s->buf + chp;
         if (n > 0) {
-                char *limit = s->buf + BUFSIZE;
+                char *limit = s->buf + EDITLINE_BUFSIZE;
                 char *cz = memchr(ch, 0, limit - ch);
                 assert(cz);
                 assert(cz < limit);
@@ -279,14 +280,14 @@ int editline_process_char(struct editline *s, char ch)
 
 static void raw_insert(struct editline *s, int pos, int len)
 {
-        memmove(s->buf + pos + len, s->buf + pos, BUFSIZE - (pos + len));
+        memmove(s->buf + pos + len, s->buf + pos, EDITLINE_BUFSIZE - (pos + len));
         memset(s->buf + pos, ' ', len);
 }
 
 static void raw_delete(struct editline *s, int pos, int len)
 {
-        memmove(s->buf + pos, s->buf + pos + len, BUFSIZE - (pos + len));
-        memset(s->buf + BUFSIZE - (pos + len), '\177', pos + len);
+        memmove(s->buf + pos, s->buf + pos + len, EDITLINE_BUFSIZE - (pos + len));
+        memset(s->buf + EDITLINE_BUFSIZE - (pos + len), '\177', pos + len);
 }
 
 static void realize_history(struct editline *state, bool always_promote)
@@ -299,7 +300,7 @@ static void realize_history(struct editline *state, bool always_promote)
         if (!state->hcur && always_promote)
                 return;
         int hl = strlen(state->buf + state->hcur) + 1;
-        if (always_promote || state->hcur + 2 * hl  >= BUFSIZE) {
+        if (always_promote || state->hcur + 2 * hl  >= EDITLINE_BUFSIZE) {
                 //memswap(state->buf, cl + 1, state->hcur - (cl + 1), hl + 1);
                 memswap(state->buf, 0, state->hcur, hl);
         } else {
@@ -315,7 +316,7 @@ static void delete_chars(struct editline *state, int pos, int len)
         realize_history(state, false);
         assert(pos >= 0);
         assert(pos + len <= state->len);
-        assert(pos + len < BUFSIZE);
+        assert(pos + len < EDITLINE_BUFSIZE);
         /* if (pos < 0) { */
         /*         len += pos; */
         /*         pos = 0; */
@@ -333,7 +334,7 @@ static void delete_chars(struct editline *state, int pos, int len)
 static bool insert_chars(struct editline *state, int pos, int len)
 {
         realize_history(state, false);
-        if (len + state->len >= BUFSIZE - 1)
+        if (len + state->len >= EDITLINE_BUFSIZE - 1)
                 return false;
         raw_insert(state, pos, len);
         state->len += len;
@@ -410,8 +411,10 @@ editline_char(struct editline *state, char ch)
                         return EL_NOTHING;
                 move_cursor_to(state, state->pos - 1);
         case CTL('D'):
-                delete_chars(state, state->pos, 1);
-                print_rest(state);
+                if (state->buf[state->pos]) {
+                        delete_chars(state, state->pos, 1);
+                        print_rest(state);
+                }
 //                print_from(state, state->pos);
                 break;
         case CTL('F'): move_cursor_to(state, npos + 1); break;
@@ -518,7 +521,7 @@ editline_char(struct editline *state, char ch)
                 putnum(state->len);
                 putchar2('\r', '\n');
                 csi('m');
-                for (int i = 0; i < BUFSIZE; i++)
+                for (int i = 0; i < EDITLINE_BUFSIZE; i++)
                         debug_color_char(state->buf[i]);
                 putchar2('\r', '\n');
                 redraw_current_command(state);

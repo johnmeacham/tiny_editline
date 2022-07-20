@@ -47,10 +47,8 @@ it.
 
 ## Supported editing commands
 
-### Basic commands
+### Basic Editing
 
-        ^P (Up arrow)    - previous from history
-        ^N (Down arrow)  - next from history
         ^F (Right arrow) - move cursor one character forward
         ^B (Left arrow)  - move cursor one character backwards
         ^A (Home)        - move cursor to begining of line
@@ -63,6 +61,11 @@ it.
         ^L               - clear and redraw screen
         ^M (Enter)       - enter command
         ^T               - transpose characters, dragging character forward.
+
+### History
+
+        ^P (Up arrow)    - previous from history
+        ^N (Down arrow)  - next from history
 
 ### Word manipulation
 
